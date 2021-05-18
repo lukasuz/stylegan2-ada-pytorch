@@ -107,7 +107,7 @@ def project(
         dist = (target_features - synth_features).square().sum()
 
         # Landmark dist
-        synth_landmarks = FLE.extract(synth_images[0].cpu().numpy())
+        synth_landmarks = FLE.extract(synth_images[0].detach().cpu().numpy())
         landmark_dist = FLE.landmarks_distance(target_landmarks, synth_landmarks)
 
         # Noise regularization.
