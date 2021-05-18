@@ -22,9 +22,13 @@ import torch.nn.functional as F
 import dnnlib
 import legacy
 
+from facial_landmark_extractor import FacialLandmarksExtractor
+
 def project(
     G,
-    target: torch.Tensor, # [C,H,W] and dynamic range [0,255], W & H must match G output resolution
+    FLE,
+    target: torch.Tensor, # [C,H,W] and dynamic range [0,255], W & H must match G output resolution,
+    target_landmarks,
     *,
     num_steps                  = 1000,
     w_avg_samples              = 10000,
@@ -34,6 +38,7 @@ def project(
     lr_rampup_length           = 0.05,
     noise_ramp_length          = 0.75,
     regularize_noise_weight    = 1e5,
+    landmark_weight            = 1,
     verbose                    = False,
     device: torch.device
 ):
@@ -101,6 +106,10 @@ def project(
         synth_features = vgg16(synth_images, resize_images=False, return_lpips=True)
         dist = (target_features - synth_features).square().sum()
 
+        # Landmark dist
+        synth_landmarks = FLE.extract(synth_images[0].cpu().numpy())
+        landmark_dist = FLE.landmarks_distance(target_landmarks, synth_landmarks)
+
         # Noise regularization.
         reg_loss = 0.0
         for v in noise_bufs.values():
@@ -111,7 +120,7 @@ def project(
                 if noise.shape[2] <= 8:
                     break
                 noise = F.avg_pool2d(noise, kernel_size=2)
-        loss = dist + reg_loss * regularize_noise_weight
+        loss = dist + reg_loss * regularize_noise_weight + landmark_dist * landmark_weight
 
         # Step
         optimizer.zero_grad(set_to_none=True)
@@ -134,18 +143,24 @@ def project(
 
 @click.command()
 @click.option('--network', 'network_pkl', help='Network pickle filename', required=True)
-@click.option('--target', 'target_fname', help='Target image file to project to', required=True, metavar='FILE')
+@click.option('--target_look',            help='Target image file to project to', required=True, metavar='FILE')
+@click.option('--target_landmarks',       help='Target image file to project to', required=True, metavar='FILE')
+@click.option('--face_detector',          help='Path to the face detector file', required=True)
 @click.option('--num-steps',              help='Number of optimization steps', type=int, default=1000, show_default=True)
+@click.option('--landmark_weight',        help='Weighting factor of landmark loss', type=float, default=1, show_default=True)
 @click.option('--seed',                   help='Random seed', type=int, default=303, show_default=True)
 @click.option('--save-video',             help='Save an mp4 video of optimization progress', type=bool, default=True, show_default=True)
 @click.option('--outdir',                 help='Where to save the output images', required=True, metavar='DIR')
 def run_projection(
     network_pkl: str,
-    target_fname: str,
+    target_look: str,
+    target_landmarks: str,
+    face_detector: str,
     outdir: str,
     save_video: bool,
     seed: int,
-    num_steps: int
+    num_steps: int,
+    landmark_weight: float
 ):
     """Project given image to the latent space of pretrained network pickle.
 
@@ -160,25 +175,42 @@ def run_projection(
 
     # Load networks.
     print('Loading networks from "%s"...' % network_pkl)
-    device = torch.device('cuda')
+    device = torch.device('cpu')
     with dnnlib.util.open_url(network_pkl) as fp:
         G = legacy.load_network_pkl(fp)['G_ema'].requires_grad_(False).to(device) # type: ignore
 
-    # Load target image.
-    target_pil = PIL.Image.open(target_fname).convert('RGB')
-    w, h = target_pil.size
+    # Load facial landmark extractor
+    FLE = FacialLandmarksExtractor(face_detector)
+
+    # Load target look image.
+    target_pil_look = PIL.Image.open(target_look).convert('RGB')
+    w, h = target_pil_look.size
     s = min(w, h)
-    target_pil = target_pil.crop(((w - s) // 2, (h - s) // 2, (w + s) // 2, (h + s) // 2))
-    target_pil = target_pil.resize((G.img_resolution, G.img_resolution), PIL.Image.LANCZOS)
-    target_uint8 = np.array(target_pil, dtype=np.uint8)
+    target_pil_look = target_pil_look.crop(((w - s) // 2, (h - s) // 2, (w + s) // 2, (h + s) // 2))
+    target_pil_look = target_pil_look.resize((G.img_resolution, G.img_resolution), PIL.Image.LANCZOS)
+    target_look_uint8 = np.array(target_pil_look, dtype=np.uint8)
+
+    # Load target landmark image.
+    target_pil_landmarks = PIL.Image.open(target_look).convert('RGB')
+    w, h = target_pil_landmarks.size
+    s = min(w, h)
+    target_pil_landmarks = target_pil_landmarks.crop(((w - s) // 2, (h - s) // 2, (w + s) // 2, (h + s) // 2))
+    target_pil_landmarks = target_pil_landmarks.resize((G.img_resolution, G.img_resolution), PIL.Image.LANCZOS)
+    target_landmarks_uint8 = np.array(target_pil_landmarks, dtype=np.uint8)
+
+    target_landmarks = FLE.extract(target_landmarks_uint8)
+    target_landmarks_w_landmarks_uint8 = FLE._draw_landmarks_on_img(target_landmarks_uint8, target_landmarks)
 
     # Optimize projection.
     start_time = perf_counter()
     projected_w_steps = project(
         G,
-        target=torch.tensor(target_uint8.transpose([2, 0, 1]), device=device), # pylint: disable=not-callable
+        FLE,
+        target=torch.tensor(target_look_uint8.transpose([2, 0, 1]), device=device), # pylint: disable=not-callable
+        target_landmarks=target_landmarks, # pylint: disable=not-callable
         num_steps=num_steps,
         device=device,
+        landmark_weight=landmark_weight,
         verbose=True
     )
     print (f'Elapsed: {(perf_counter()-start_time):.1f} s')
@@ -186,17 +218,20 @@ def run_projection(
     # Render debug output: optional video and projected image and W vector.
     os.makedirs(outdir, exist_ok=True)
     if save_video:
-        video = imageio.get_writer(f'{outdir}/proj.mp4', mode='I', fps=10, codec='libx264', bitrate='16M')
+        video = imageio.get_writer(f'{outdir}/proj.mp4', mode='I', fps=30, codec='libx264', bitrate='16M')
         print (f'Saving optimization progress video "{outdir}/proj.mp4"')
         for projected_w in projected_w_steps:
             synth_image = G.synthesis(projected_w.unsqueeze(0), noise_mode='const')
             synth_image = (synth_image + 1) * (255/2)
             synth_image = synth_image.permute(0, 2, 3, 1).clamp(0, 255).to(torch.uint8)[0].cpu().numpy()
-            video.append_data(np.concatenate([target_uint8, synth_image], axis=1))
+            synth_landmarks = FLE.extract(synth_image)
+            synth_image_w_landmarks = FLE._draw_landmarks_on_img(synth_image, synth_landmarks)
+            video.append_data(np.concatenate([target_look_uint8, synth_image, synth_image_w_landmarks, target_landmarks_w_landmarks_uint8], axis=1))
         video.close()
 
     # Save final projected frame and W vector.
-    target_pil.save(f'{outdir}/target.png')
+    target_pil_look.save(f'{outdir}/target_look.png')
+    target_pil_landmarks.save(f'{outdir}/target_landmarks.png')
     projected_w = projected_w_steps[-1]
     synth_image = G.synthesis(projected_w.unsqueeze(0), noise_mode='const')
     synth_image = (synth_image + 1) * (255/2)
