@@ -108,7 +108,12 @@ def project(
 
         # Landmark dist
         synth_landmarks = FLE.extract(synth_images[0].detach().cpu().numpy())
-        landmark_dist = FLE.landmarks_distance(target_landmarks, synth_landmarks)
+
+        target_landmarks_torch, synth_landmarks = FLE.landmarks_distance(target_landmarks, synth_landmarks, normalise=True, no_calc=True)
+        synth_landmarks = torch.autograd.Variable(torch.FloatTensor(synth_landmarks), requires_grad=True)
+        target_landmarks_torch = torch.autograd.Variable(torch.FloatTensor(target_landmarks_torch), requires_grad=True)
+        
+        landmark_dist =  torch.sum(torch.sqrt((target_landmarks_torch - synth_landmarks)**2))
 
         # Noise regularization.
         reg_loss = 0.0
