@@ -160,17 +160,18 @@ class FacialLandmarksExtractor:
 
         return np.sum(np.sqrt((landmarks1 - landmarks2)**2))
 
-model_path = "./shape_predictor_68_face_landmarks.dat"
-path1 = "./obama.webp"
-path2 = "2.jpg"
+if __name__ == "__main__":
+    model_path = "./shape_predictor_68_face_landmarks.dat"
+    path1 = "./obama.webp"
+    path2 = "2.jpg"
 
-FLE = FacialLandmarksExtractor(model_path)
-img1, landmarks1 = FLE.read_and_extract(path1)
-img2, landmarks2 = FLE.read_and_extract(path2)
+    FLE = FacialLandmarksExtractor(model_path)
+    img1, landmarks1 = FLE.read_and_extract(path1)
+    img2, landmarks2 = FLE.read_and_extract(path2)
 
-face_distance = FLE.landmarks_distance(landmarks1, landmarks2)
-print("Face Distance:", face_distance)
+    face_distance = FLE.landmarks_distance(landmarks1, landmarks2)
+    print("Face Distance:", face_distance)
 
-FLE.display_landmarks_img(img2, landmarks2)
-FLE.display_langmark_projection(img1, landmarks1, landmarks2)
+    FLE.display_landmarks_img(img2, landmarks2)
+    FLE.display_langmark_projection(img1, landmarks1, landmarks2)
 
