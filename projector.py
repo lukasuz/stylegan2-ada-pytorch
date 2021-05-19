@@ -107,8 +107,7 @@ def project(
         dist = (target_features - synth_features).square().sum()
 
         # Landmark dist
-        synth_img_np = synth_images[0].detach().cpu().numpy()
-        synth_img_np.permute(1, 2, 0)
+        synth_img_np = synth_images[0].detach().cpu().permute(1, 2, 0).numpy()
         synth_landmarks = FLE.extract(synth_img_np)
 
         target_landmarks_torch, synth_landmarks = FLE.landmarks_distance(target_landmarks, synth_landmarks, normalise=True, no_calc=True)
