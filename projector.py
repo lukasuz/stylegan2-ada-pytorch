@@ -107,7 +107,10 @@ def project(
         dist = (target_features - synth_features).square().sum()
 
         # Landmark dist
-        synth_landmarks = FLE.extract(synth_images[0].detach().cpu().numpy())
+        synth_img_np = synth_images[0].detach().cpu().numpy()
+        print(type(synth_features))
+        print(synth_img_np.shape)
+        synth_landmarks = FLE.extract(synth_img_np)
 
         target_landmarks_torch, synth_landmarks = FLE.landmarks_distance(target_landmarks, synth_landmarks, normalise=True, no_calc=True)
         synth_landmarks = torch.autograd.Variable(torch.FloatTensor(synth_landmarks), requires_grad=True)
