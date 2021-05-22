@@ -30,3 +30,6 @@ class FacialLandmarkLoss(torch.autograd.Function):
         grad_input = 2 * (landmarks1 - landmarks2)
 
         return grad_input, None 
+
+
+if __name__ == "__main__":
