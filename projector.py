@@ -200,7 +200,7 @@ def run_projection(
     target_look_uint8 = np.array(target_pil_look, dtype=np.uint8)
 
     # Load target landmark image.
-    target_pil_landmarks = PIL.Image.open(target_look).convert('RGB')
+    target_pil_landmarks = PIL.Image.open(target_landmarks).convert('RGB')
     w, h = target_pil_landmarks.size
     s = min(w, h)
     target_pil_landmarks = target_pil_landmarks.crop(((w - s) // 2, (h - s) // 2, (w + s) // 2, (h + s) // 2))
