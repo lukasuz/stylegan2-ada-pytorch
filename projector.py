@@ -115,8 +115,7 @@ def project(
         synth_features = vgg16(synth_images, resize_images=False, return_lpips=True)
         dist = (target_features - synth_features).square().sum()
 
-        with torch.no_grad():
-            synth_heatmaps = FLE.get_heat_map(synth_images)
+        synth_heatmaps = FLE.get_heat_map(synth_images)
         landmark_loss = (target_heatmap - synth_heatmaps).square().sum().sqrt()
 
         # Noise regularization.
