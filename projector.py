@@ -28,7 +28,7 @@ def project(
     G,
     FLE,
     target: torch.Tensor, # [C,H,W] and dynamic range [0,255], W & H must match G output resolution,
-    target_landmarks,
+    target_landmarks: torch.Tensor,
     *,
     num_steps                  = 1000,
     w_avg_samples              = 10000,
@@ -38,7 +38,7 @@ def project(
     lr_rampup_length           = 0.05,
     noise_ramp_length          = 0.75,
     regularize_noise_weight    = 1e5,
-    landmark_weight            = 1,
+    landmark_weight            = 0.01,
     verbose                    = False,
     device: torch.device
 ):
@@ -76,6 +76,14 @@ def project(
     w_out = torch.zeros([num_steps] + list(w_opt.shape[1:]), dtype=torch.float32, device=device)
     optimizer = torch.optim.Adam([w_opt] + list(noise_bufs.values()), betas=(0.9, 0.999), lr=initial_learning_rate)
 
+    # Get heat map
+    target_images_landmarks = target_landmarks.unsqueeze(0).to(device).to(torch.float32)
+    if target_images_landmarks.shape[2] > 256:
+        target_images_landmarks = F.interpolate(target_images_landmarks, size=(256, 256), mode='area')
+
+    with torch.no_grad():
+        target_heatmap = FLE.get_heat_map(target_images_landmarks)
+
     # Init noise.
     for buf in noise_bufs.values():
         buf[:] = torch.randn_like(buf)
@@ -95,7 +103,7 @@ def project(
         # Synth images from opt_w.
         w_noise = torch.randn_like(w_opt) * w_noise_scale
         ws = (w_opt + w_noise).repeat([1, G.mapping.num_ws, 1])
-        synth_images = G.synthesis(ws, noise_mode='const')
+        synth_images = G.synthesis(ws, noise_mode='const', force_fp32=True)
 
         # Downsample image to 256x256 if it's larger than that. VGG was built for 224x224 images.
         synth_images = (synth_images + 1) * (255/2)
@@ -106,18 +114,9 @@ def project(
         synth_features = vgg16(synth_images, resize_images=False, return_lpips=True)
         dist = (target_features - synth_features).square().sum()
 
-        # Landmark dist
-        synth_img_np = synth_images[0].detach().cpu().permute(1, 2, 0).numpy().astype('int64')
-        # print(type(synth_img_np))
-        # print(synth_img_np.shape)
-        synth_img_np = PIL.Image.fromarray(synth_img_np)
-        synth_landmarks = FLE.extract(synth_img_np)
-
-        target_landmarks_torch, synth_landmarks = FLE.landmarks_distance(target_landmarks, synth_landmarks, normalise=True, no_calc=True)
-        synth_landmarks = torch.autograd.Variable(torch.FloatTensor(synth_landmarks), requires_grad=True)
-        target_landmarks_torch = torch.autograd.Variable(torch.FloatTensor(target_landmarks_torch), requires_grad=True)
-        
-        landmark_dist =  torch.sum(torch.sqrt((target_landmarks_torch - synth_landmarks)**2))
+        with torch.no_grad():
+            synth_heatmaps = FLE.get_heat_map(synth_images)
+        landmark_loss = (target_heatmap - synth_heatmaps).square().sum().sqrt()
 
         # Noise regularization.
         reg_loss = 0.0
@@ -129,13 +128,13 @@ def project(
                 if noise.shape[2] <= 8:
                     break
                 noise = F.avg_pool2d(noise, kernel_size=2)
-        loss = dist + reg_loss * regularize_noise_weight + landmark_dist * landmark_weight
+        loss = dist + reg_loss * regularize_noise_weight + landmark_loss * landmark_weight
 
         # Step
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         optimizer.step()
-        logprint(f'step {step+1:>4d}/{num_steps}: dist {dist:<4.2f} landmark_dist {landmark_dist:<4.2f} loss {float(loss):<5.2f}')
+        logprint(f'step {step+1:>4d}/{num_steps}: dist {dist:<4.2f} landmark_dist {landmark_loss * landmark_weight:<4.2f} loss {float(loss):<5.2f}')
 
         # Save projected W for each optimization step.
         w_out[step] = w_opt.detach()[0]
@@ -154,22 +153,22 @@ def project(
 @click.option('--network', 'network_pkl', help='Network pickle filename', required=True)
 @click.option('--target_look',            help='Target image file to project to', required=True, metavar='FILE')
 @click.option('--target_landmarks',       help='Target image file to project to', required=True, metavar='FILE')
-@click.option('--face_detector',          help='Path to the face detector file', required=True)
 @click.option('--num-steps',              help='Number of optimization steps', type=int, default=1000, show_default=True)
-@click.option('--landmark_weight',        help='Weighting factor of landmark loss', type=float, default=1, show_default=True)
+@click.option('--landmark_weight',        help='Weighting factor of landmark loss', type=float, default=0.1, show_default=True)
 @click.option('--seed',                   help='Random seed', type=int, default=303, show_default=True)
 @click.option('--save-video',             help='Save an mp4 video of optimization progress', type=bool, default=True, show_default=True)
 @click.option('--outdir',                 help='Where to save the output images', required=True, metavar='DIR')
+@click.option('--device',                 help='cpu|cuda', required=True, metavar='cuda')
 def run_projection(
     network_pkl: str,
     target_look: str,
     target_landmarks: str,
-    face_detector: str,
     outdir: str,
     save_video: bool,
     seed: int,
     num_steps: int,
-    landmark_weight: float
+    landmark_weight: float,
+    device: str
 ):
     """Project given image to the latent space of pretrained network pickle.
 
@@ -184,12 +183,13 @@ def run_projection(
 
     # Load networks.
     print('Loading networks from "%s"...' % network_pkl)
-    device = torch.device('cuda')
+
+    FLE = FacialLandmarksExtractor(device=device)
+
+    device = torch.device(device)
     with dnnlib.util.open_url(network_pkl) as fp:
         G = legacy.load_network_pkl(fp)['G_ema'].requires_grad_(False).to(device) # type: ignore
-
-    # Load facial landmark extractor
-    FLE = FacialLandmarksExtractor(face_detector)
+        G = G.float()
 
     # Load target look image.
     target_pil_look = PIL.Image.open(target_look).convert('RGB')
@@ -216,7 +216,7 @@ def run_projection(
         G,
         FLE,
         target=torch.tensor(target_look_uint8.transpose([2, 0, 1]), device=device), # pylint: disable=not-callable
-        target_landmarks=target_landmarks, # pylint: disable=not-callable
+        target_landmarks=torch.tensor(target_landmarks_w_landmarks_uint8.transpose([2, 0, 1]), device=device), # pylint: disable=not-callable
         num_steps=num_steps,
         device=device,
         landmark_weight=landmark_weight,
