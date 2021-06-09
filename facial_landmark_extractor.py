@@ -6,12 +6,11 @@ import torch
 # from torchvision.transforms import Resize
 
 class FacialLandmarksExtractor:
-    def __init__(self, align=True, device='cuda'):
+    def __init__(self, device='cuda', landmark_weights=None):
         self.fa = face_alignment.FaceAlignment(
             face_alignment.LandmarksType._2D, flip_input=False, device=device)
         
         self.resolution = 256
-        # self.resize = Resize((resolution, resolution))
 
         self.landmarks_dict = {
             'jaw': (0, 16),
@@ -24,6 +23,27 @@ class FacialLandmarksExtractor:
             'outer_lip': (48, 59),
             'inner_lip': (60, 67)
         }
+        self.center_index = 27
+
+        if landmark_weights is None:
+            landmark_weights = [ 
+                0.05, # jaw
+                1.0, # left_eyebrow
+                1.0, # right_eyebrow
+                1.0, # nose_bridge
+                1.0, # lower_nose
+                1.0, # left_eye
+                1.0, # right_eye
+                1.0, # outer_lip
+                1.0, # inner_lip
+            ]
+        self.landmark_weights = np.zeros(68)
+
+        for i, bounds in enumerate(self.landmarks_dict.values()):
+            upper, lower = bounds
+            self.landmark_weights[upper:lower+1] = landmark_weights[i]
+
+        self.landmark_weights = torch.Tensor(self.landmark_weights)
 
     def read_and_extract(self, path):
         img = cv2.imread(path)
