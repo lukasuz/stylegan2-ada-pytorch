@@ -140,7 +140,7 @@ def project(
 
         synth_heatmaps = FLE.get_heat_map(synth_images)
         landmark_loss = (target_heatmap - synth_heatmaps) * weight_matrix
-        landmark_weight = landmark_loss.square().sum().sqrt()
+        landmark_loss = landmark_loss.square().sum().sqrt()
 
         # Noise regularization.
         reg_loss = 0.0

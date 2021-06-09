@@ -30,7 +30,7 @@ class FacialLandmarksExtractor:
                 0.05, # jaw
                 1.0, # left_eyebrow
                 1.0, # right_eyebrow
-                1.0, # nose_bridge
+                0.1, # nose_bridge
                 1.0, # lower_nose
                 1.0, # left_eye
                 1.0, # right_eye
