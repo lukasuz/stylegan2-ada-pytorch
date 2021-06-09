@@ -39,6 +39,7 @@ def project(
     noise_ramp_length          = 0.75,
     regularize_noise_weight    = 1e5,
     landmark_weight            = 0.01,
+    lpips_weight               = 1.0,
     verbose                    = False,
     device: torch.device
 ):
@@ -128,13 +129,13 @@ def project(
                 if noise.shape[2] <= 8:
                     break
                 noise = F.avg_pool2d(noise, kernel_size=2)
-        loss = dist + reg_loss * regularize_noise_weight + landmark_loss * landmark_weight
+        loss = lpips_weight * dist + reg_loss * regularize_noise_weight + landmark_loss * landmark_weight
 
         # Step
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         optimizer.step()
-        logprint(f'step {step+1:>4d}/{num_steps}: dist {dist:<4.2f} landmark_dist {landmark_loss * landmark_weight:<4.2f} loss {float(loss):<5.2f}')
+        logprint(f'step {step+1:>4d}/{num_steps}: dist {lpips_weight * dist:<4.2f} landmark_dist {landmark_loss * landmark_weight:<4.2f} loss {float(loss):<5.2f}')
 
         # Save projected W for each optimization step.
         w_out[step] = w_opt.detach()[0]
@@ -154,6 +155,7 @@ def project(
 @click.option('--target_look',            help='Target image file to project to', required=True, metavar='FILE')
 @click.option('--target_landmarks',       help='Target image file to project to', required=True, metavar='FILE')
 @click.option('--num-steps',              help='Number of optimization steps', type=int, default=1000, show_default=True)
+@click.option('--lpips_weight',           help='Weighting factor of lpips loss', type=float, default=1.0, show_default=True)
 @click.option('--landmark_weight',        help='Weighting factor of landmark loss', type=float, default=0.1, show_default=True)
 @click.option('--seed',                   help='Random seed', type=int, default=303, show_default=True)
 @click.option('--save-video',             help='Save an mp4 video of optimization progress', type=bool, default=True, show_default=True)
@@ -168,6 +170,7 @@ def run_projection(
     seed: int,
     num_steps: int,
     landmark_weight: float,
+    lpips_weight: float,
     device: str
 ):
     """Project given image to the latent space of pretrained network pickle.
@@ -219,6 +222,7 @@ def run_projection(
         target_landmarks=torch.tensor(target_landmarks_w_landmarks_uint8.transpose([2, 0, 1]), device=device), # pylint: disable=not-callable
         num_steps=num_steps,
         device=device,
+        lpips_weight=lpips_weight,
         landmark_weight=landmark_weight,
         verbose=True
     )
