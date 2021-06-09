@@ -43,7 +43,7 @@ class FacialLandmarksExtractor:
             upper, lower = bounds
             self.landmark_weights[upper:lower+1] = landmark_weights[i]
 
-        self.landmark_weights = torch.Tensor(self.landmark_weights)
+        self.landmark_weights = torch.Tensor(self.landmark_weights, device=device)
 
     def read_and_extract(self, path):
         img = cv2.imread(path)
