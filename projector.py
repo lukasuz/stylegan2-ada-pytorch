@@ -187,13 +187,14 @@ def project(
 @click.option('--seed',                   help='Random seed', type=int, default=303, show_default=True)
 @click.option('--save-video',             help='Save an mp4 video of optimization progress', type=bool, default=True, show_default=True)
 @click.option('--outdir',                 help='Where to save the output images', required=True, metavar='DIR')
+@click.option('--save_video',             help='0|1', metavar='0')
 @click.option('--device',                 help='cpu|cuda', required=True, metavar='cuda')
 def run_projection(
     network_pkl: str,
     target_look: str,
     target_landmarks: str,
     outdir: str,
-    save_video: bool,
+    save_video: int,
     seed: int,
     num_steps: int,
     landmark_weight: float,
